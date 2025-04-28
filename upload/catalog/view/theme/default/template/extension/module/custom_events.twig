@@ -1,4 +1,13 @@
 <div
+    id="mailbiz"
     data-custom-events-token="{{ token }}"
-    style="display: none;"
-></div>
+    data-cart='{{ cart | json_encode }}'
+    data-products='{{ products | json_encode }}'
+    data-totals='{{ totals | json_encode }}'
+    data-has-products="{{ has_products }}"
+    data-has-shipping="{{ has_shipping }}"
+    data-has-download="{{ has_download }}"
+    data-has-stock="{{ has_stock }}"
+    data-count-products="{{ count_products }}"
+    data-base-url="{{ base_url }}">
+</div>
