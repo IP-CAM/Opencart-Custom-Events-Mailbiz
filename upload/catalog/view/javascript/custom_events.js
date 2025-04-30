@@ -41,7 +41,6 @@ window.addEventListener("load", function (event) {
       };
     }
   }
-  
   // Usage example:
   /*
   https://demo.vowt.dev.br/teste-guilherme/?route=extension/module/custom_events/getCustomerApi
@@ -62,10 +61,11 @@ window.addEventListener("load", function (event) {
     const url_userData = el.getAttribute('data-base-url');
     const url_userData_api = url_userData + '?route=extension/module/custom_events/getCustomerApi';
     const url_get_cart_products = url_userData + '?route=extension/module/custom_events/getCartProductsApi';
+    const url_get_last_order = url_userData + '?route=extension/module/custom_events/getLastOrderApi';
+    const url_post_add_product = url_userData + '?route=checkout/cart/add';
   
     let customerData = null;
     let isLogged = false;
-    // const isLogged = el.getAttribute('data-customer-is-logged') === 'true';
   
     const getCustomer = async () => {
       try {
@@ -77,12 +77,9 @@ window.addEventListener("load", function (event) {
         };
         const response = await makeRequest(url_userData_api, options);
         if (response.success === false) {
-          // isLogged = false;
           throw new Error(`HTTP error! status: ${response.error}`);
         }
         console.log('Dados do cliente -2:', response.data.customer);
-        // customerData = response.data.customer;
-        // isLogged = true;
         return response
       } catch (error) {
         throw error;
@@ -94,7 +91,6 @@ window.addEventListener("load", function (event) {
       if (result.data.customer){
         customerData = result.data.customer;
         isLogged = true;
-        console.log('Dados do cliente -4:', customerData);
         const eventData = {
           user: {
             user_id: result.data.customer.customer_id,
@@ -123,23 +119,10 @@ window.addEventListener("load", function (event) {
   
       // Lê os dados do elemento
       const cartData = JSON.parse(el.getAttribute('data-cart') || '{}');
-      // const customerData = JSON.parse(el.getAttribute('data-customer-data') || '{}');
-      // const productsData = JSON.parse(el.getAttribute('data-products') || '[]');
       const totalsData = JSON.parse(el.getAttribute('data-totals') || '{}');
-        const totalDataTotal = totalsData.totals.filter(total => total.title === "Total")[0].text;
-        const totalDataCupom = totalsData.totals.filter(total => total.title.startsWith("Cupom"))[0]?.text || "";
-        const totalDataSubTotal = totalsData.totals.filter(total => total.title === "Sub-total")[0].text;
-      const hasProducts = el.getAttribute('data-has-products') === 'true';
-      const hasShipping = el.getAttribute('data-has-shipping') === 'true';
-      const hasDownload = el.getAttribute('data-has-download') === 'true';
-      const hasStock = el.getAttribute('data-has-stock') === 'true';
-      const countProducts = parseInt(el.getAttribute('data-count-products') || '0');
-      const valorCupom = document.querySelector('[name="coupon"]') 
-        ? document.querySelector('[name="coupon"]').value
-        : "";
+      const totalDataSubTotal = totalsData.totals.filter(total => total.title === "Sub-total")[0].text;
       
       const token = el.getAttribute('data-custom-events-token');
-      // const isLogged = el.getAttribute('data-customer-is-logged') === 'true';
   
       console.log('MailbizIntegration:: Carregando o script do MailBiz', token);
   
@@ -151,34 +134,54 @@ window.addEventListener("load", function (event) {
         }
       })(window, 'mb_track');
   
-  
+      mb_track('setRecoveryUrl', `${url_userData}?route=extension/module/cart/page`);
+
       // Universal recover cart 
       (function (m, a) {
         if (m[a]) { return; }
         m[a] = function (arg) {
-            // var cartId = arg.cart_id;
-            // var userId = arg.user_id;
-            // var products = arg.products;
+          var cartId = arg.cart_id;
+          var userId = arg.user_id;
+          var products = arg.products;
+          if (isDebug) {
+            console.warn('0.0 - Cart recovery event', cartId, userId, products);
+          }
+          if (cartId) {
+            // adiciona ao session o mailbiz_cart_id
+            sessionStorage.setItem('mailbiz_cart_id', cartId);
+            console.warn('0.1 - Cart recovery event', cartId, userId, products);
+          }
+          const addToCart = async (product_id, quantity) => {
+            try {
+              const options = {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: `product_id=${parseInt(product_id)}&quantity=${quantity}`
+              };
+              const response = await makeRequest(url_post_add_product, options);
+              return response
+            } catch (error) {
+              throw error;
+            }    
+          }
+
+          const addToCartPromises = products.map(product => 
+            addToCart(product.product_id, product.quantity)
+          );
           
-            // // eg: recover cart trough an API
-            // var response = await fetch("https://example.com/cart", {
-            //   method: "POST",
-            //   body: JSON.stringify(products.map((p) => p.sku));
-            // });
-              
-            // products.forEach(function (product) {
-            //     var productId = product.product_id;
-            //     var sku = product.sku;
-            //     var quantity = product.quantity;
-            //     var recoveryProperties = product.recovery_properties;
-              
-            //     // eg: add products to cart trough helper function
-            //     example.addToCart(productId, sku, quantity, recoveryProperties.someData)
-            // });
+          Promise.all(addToCartPromises)
+            .then(() => {
+              // Redirect to cart page after all products are added
+              window.location.href = `${url_userData}?route=extension/module/cart/page`;
+            })
+            .catch(error => {
+              console.error('Error adding products to cart:', error);
+            });
         };
       })(window, 'mb_recover_cart');
-  
-  
+
       // Hub Mailbiz
       (function(m, a, i, l, b, z, j, s) {
           m['MailbizIntegration'] = {
@@ -197,14 +200,17 @@ window.addEventListener("load", function (event) {
           'https://d3eq1zq78ux3cv.cloudfront.net/static/scripts/integration.min.js',
           token
       );
+
       function getQueryParam(param) {
         const urlParams = new URLSearchParams(window.location.search);
         return urlParams.get(param);
       }
+
       const currentRoute = getQueryParam('route');
       const isCheckoutPage = currentRoute === 'extension/module/checkoutpro/checkout';
       const isCartPage = currentRoute === 'extension/module/cart/page';
-      
+      const isSuccessPage = currentRoute === 'checkout/success';
+
       if (isDebug) {
         console.log('MailbizIntegration:: Rota atual:', currentRoute);
         console.log('MailbizIntegration:: É página de checkout:', isCheckoutPage);
@@ -230,25 +236,21 @@ window.addEventListener("load", function (event) {
             if (response.success === false) {
               throw new Error(`HTTP error! status: ${response.error}`);
             }
-            console.log('Dados do cliente -2:', response.data.customer);
             return response
           } catch (error) {
             throw error;
           }    
         }
         getProducts().then(result => {
-          console.log('dados de produtos do carrinho - 1:', result.data.products);
-          console.log('dados de produtos do carrinho - 1:', result.data.total_amount_raw);
-          console.log('dados de produtos do carrinho - 1:', result.data.total_items);
           // Prepara o objeto para o evento cartSync
           const cartSyncData = {
             cart: {
                 cart_id: result.data.products[0].cart_id,
-                coupons: result.data.coupon.code,
+                coupons: result.data?.coupon ? result.data.coupon.code : "",
                 subtotal: totalDataSubTotal,
                 freight: -1,
                 tax: -1,
-                discounts: Math.abs(result.data.coupon.discount) || -1,
+                discounts: result.data.coupon ? Math.abs(result.data.coupon?.discount) : -1,
                 total: result.data.total_amount_raw,
                 items: result.data.products.map(product => ({
                     product_id: product.product_id,
@@ -267,60 +269,21 @@ window.addEventListener("load", function (event) {
           }
         })
       }
-      
-      // if (typeof addToCart === "function") {
-      //   // Intercepta a função addToCart
-      //   const interceptedAddToCart = addToCart;
-  
-      //   // Redefinir a função com um wrapper
-      //   addToCart = function(...args) {
-      //     // Executa a função original primeiro
-      //     const result = interceptedAddToCart.apply(this, args);
-  
-      //     // Prepara o objeto para o evento cartSync
-      //     const cartSyncData = {
-      //         cart: {
-      //             cart_id: productsData[0].cart_id,
-      //             subtotal: totalDataSubTotal,
-      //             freight: -1,
-      //             tax: -1,
-      //             discounts: Math.abs(totalDataCupom) || -1,
-      //             total: totalDataTotal,
-      //             coupons: valorCupom,
-      //             items: productsData.map(product => ({
-      //                 product_id: product.product_id,
-      //                 sku: product.sku || product.product_id,
-      //                 name: product.name,
-      //                 price: parseFloat(product.price.replace("R$", "").replace(/\./g, "").replace(",", ".").trim()),
-      //                 quantity: parseInt(product.quantity),
-      //                 image_url: product.image || '',
-      //             }))
-      //         }
-      //     };
-  
-      //     // Dispara o evento cartSync
-      //     window.mb_track('cartSync', cartSyncData);
-      //     console.log('MailbizIntegration:: 2.1 - Evento cartSync disparado', cartSyncData);
-          
-      //     return result;
-      //   };
-      // }
-      // Evento de fechar abrir o carrinho 
+
+      /**
+       * 
+       *
+       * @description Eventos de interface responsaveis por disparo de eventos para o Mailbiz
+       *
+       */
       var myOffcanvas = document.getElementById('offcanvasCart')
-        
-      myOffcanvas.addEventListener('hide.bs.offcanvas', function () {
-        sendCartSyncEvent();
-      });
-      
-      // if (typeof getCart === "function") {
-      //   // Intercepta a função getCart
-      //   const interceptedGetCart = getCart;
-      //   const result = interceptedGetCart.apply(this, args);
-      //   console.log('resultado da função getCart:');
-      //   // Redefinir a função com um wrapper
-      //   sendCartSyncEvent();
-      //   return result;
-      // }
+      if (myOffcanvas) {
+        myOffcanvas.addEventListener('hide.bs.offcanvas', function () {
+          sendCartSyncEvent();
+        });
+      }
+
+
       Cart.on('loaded_cart', function(html) {
         sendCartSyncEvent();
       });
@@ -328,8 +291,84 @@ window.addEventListener("load", function (event) {
       if (isCartPage) {
         sendCartSyncEvent();
       }
-  
-      
-    // }, 1000); // Espera 1 segundo antes de tentar
+
+      if (isCheckoutPage) {
+        const checkoutEventData = {
+          checkout: {
+            cart_id: cartData.products[0].cart_id,
+            step: 1,
+            total_steps: 1,
+            step_name: 'CHECKOUT',
+          }
+        };
+
+        sessionStorage.setItem('cart_id', cartData.products[0].cart_id);
+        
+        if (isDebug) {
+          console.log('MailbizIntegration:: 3.1 checkoutStep() - ischeckoutPage true then send checkout step', checkoutEventData)
+        }
+        window.mb_track('checkoutStep', checkoutEventData);
+      };
+
+      if (isSuccessPage) {
+        const cart_id = sessionStorage.getItem('cart_id');
+        const mailbiz_cart_id = sessionStorage.getItem('mailbiz_cart_id');
+        
+        const getLastOrder = async () => {
+          try {
+            const options = {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            };
+            const response = await makeRequest(url_get_last_order, options);
+            if (response.success === false) {
+              throw new Error(`HTTP error! status: ${response.error}`);
+            }
+            return response
+          } catch (error) {
+            throw error;
+          }    
+        }
+
+        getLastOrder()
+          .then(result => {
+            console.log('dados last order', result);
+            const orderCompleteItemsData = {
+              items: result.data.order.products.map(product => ({
+                product_id: product.product_id,
+                sku: product.sku || product.product_id,
+                name: product.name,
+                price: product.price,
+                quantity: parseInt(product.quantity),
+              }))
+            }
+    
+            const orderCompleteEventData = {
+              order: {
+                order_id: result.data.order.order_id,
+                cart_id: mailbiz_cart_id || cart_id,
+                subtotal: Number(result.data.order.total),
+                freight: -1,
+                tax: -1,
+                discounts: -1,
+                total: Number(result.data.order.total),
+                ...orderCompleteItemsData
+              }
+            }
+          
+            window.mb_track('orderComplete', orderCompleteEventData);
+
+            if (isDebug) {
+              console.log('MailbizIntegration:: 4.1 orderComplete()', orderCompleteEventData)
+            }
+
+
+          })
+          .finally(() => {
+            sessionStorage.removeItem('cart_id');
+          });
+      }
   });
   //extension/module/checkoutpro/checkout

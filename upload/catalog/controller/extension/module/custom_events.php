@@ -58,8 +58,7 @@ class ControllerExtensionModuleCustomEvents extends Controller {
     
     public function index() {
         if ($this->config->get('module_custom_events_status')) {
-            $this->document->addScript('catalog/view/javascript/custom_events.js');
-            
+
             $data = array(
                 'token' => $this->config->get('module_custom_events_token'),
                 'is_logged' => $this->customer->isLogged() ? "true" : "false",
@@ -232,6 +231,56 @@ class ControllerExtensionModuleCustomEvents extends Controller {
         $json['total_amount_raw'] = isset($json['coupon'])
             ? $this->cart->getTotal() - round(($this->cart->getTotal() * ($coupon_info['discount'] / 100)), 2)
             : $this->cart->getTotal();
+        $this->response->addHeader('Content-Type: application/json');
+        $this->response->setOutput(json_encode($json));
+    }
+
+    public function getLastOrderApi() {
+        $json = array();
+        
+        // Check if user is logged in
+        if (!$this->customer->isLogged()) {
+            $json['error'] = 'User not authenticated';
+            $this->response->addHeader('HTTP/1.0 401 Unauthorized');
+            $this->response->setOutput(json_encode($json));
+            return;
+        }
+
+        // Load order model
+        $this->load->model('account/order');
+        
+        // Get customer's last order
+        $orders = $this->model_account_order->getOrders(0, 1);
+        
+        if (!empty($orders)) {
+            $last_order = $orders[0];
+            
+            // Get order products
+            $order_products = $this->model_account_order->getOrderProducts($last_order['order_id']);
+            
+            $products = array();
+            foreach ($order_products as $product) {
+                $products[] = array(
+                    'product_id' => $product['product_id'],
+                    'name' => $product['name'],
+                    'model' => $product['model'],
+                    'quantity' => $product['quantity'],
+                    'price' => $product['price'],
+                    'total' => $product['total']
+                );
+            }
+            
+            $json['order'] = array(
+                'order_id' => $last_order['order_id'],
+                'status' => $last_order['status'],
+                'date_added' => $last_order['date_added'],
+                'total' => $last_order['total'],
+                'products' => $products,
+            );
+        } else {
+            $json['order'] = null;
+        }
+
         $this->response->addHeader('Content-Type: application/json');
         $this->response->setOutput(json_encode($json));
     }
