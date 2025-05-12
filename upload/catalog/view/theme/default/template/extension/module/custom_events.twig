@@ -1,3 +1,5 @@
+<script src="catalog/view/javascript/custom_events.js" defer></script>
+
 <div
     id="mailbiz"
     data-custom-events-token="{{ token }}"
@@ -9,5 +11,9 @@
     data-has-download="{{ has_download }}"
     data-has-stock="{{ has_stock }}"
     data-count-products="{{ count_products }}"
+    data-product-id="{{ product_id }}"
+    data-master-id="{{ master_id }}"
+    data-oc-route="{{ oc_route }}"
     data-base-url="{{ base_url }}">
 </div>
+{# <pre>{{ dump() }}</pre> #}

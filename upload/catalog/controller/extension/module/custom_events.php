@@ -58,7 +58,7 @@ class ControllerExtensionModuleCustomEvents extends Controller {
     
     public function index() {
         if ($this->config->get('module_custom_events_status')) {
-            $this->document->addScript('catalog/view/javascript/custom_events.js');
+            $actual_route = isset($this->request->get['route']) ? $this->request->get['route'] : '';
             
             $data = array(
                 'token' => $this->config->get('module_custom_events_token'),
@@ -104,6 +104,13 @@ class ControllerExtensionModuleCustomEvents extends Controller {
             // Totais
             $data['totals'] = $this->load_cart_total();
 
+            if (isset($this->request->get['product_id'])) {
+                $data['product_id'] = $this->request->get['product_id'];
+            }
+            
+            if (isset($this->request->get['master_id'])) {
+                $data['master_id'] = $this->request->get['master_id'];
+            }
             // Status do carrinho
             $data['has_products']  = $this->cart->hasProducts();
             $data['has_shipping']  = $this->cart->hasShipping();
@@ -111,6 +118,7 @@ class ControllerExtensionModuleCustomEvents extends Controller {
             $data['has_stock']         = $this->cart->hasStock();
             $data['count_products']    = $this->cart->countProducts();
             $data['base_url'] = $this->config->get('config_url');
+            $data['oc_route'] = $actual_route;
             return $this->load->view('extension/module/custom_events', $data);
         }
     }
@@ -234,5 +242,197 @@ class ControllerExtensionModuleCustomEvents extends Controller {
             : $this->cart->getTotal();
         $this->response->addHeader('Content-Type: application/json');
         $this->response->setOutput(json_encode($json));
+    }
+
+    public function getLastOrderApi() {
+        $json = array();
+        
+        // Check if user is logged in
+        if (!$this->customer->isLogged()) {
+            $json['error'] = 'User not authenticated';
+            $this->response->addHeader('HTTP/1.0 401 Unauthorized');
+            $this->response->setOutput(json_encode($json));
+            return;
+        }
+
+        // Load order model
+        $this->load->model('account/order');
+        
+        // Get customer's last order
+        $orders = $this->model_account_order->getOrders(0, 1);
+        
+        if (!empty($orders)) {
+            $last_order = $orders[0];
+            
+            // Get order products
+            $order_products = $this->model_account_order->getOrderProducts($last_order['order_id']);
+            
+            $products = array();
+            foreach ($order_products as $product) {
+                $products[] = array(
+                    'product_id' => $product['product_id'],
+                    'name' => $product['name'],
+                    'model' => $product['model'],
+                    'quantity' => $product['quantity'],
+                    'price' => $product['price'],
+                    'total' => $product['total']
+                );
+            }
+            
+            $json['order'] = array(
+                'order_id' => $last_order['order_id'],
+                'status' => $last_order['status'],
+                'date_added' => $last_order['date_added'],
+                'total' => $last_order['total'],
+                'products' => $products,
+            );
+        } else {
+            $json['order'] = null;
+        }
+
+        $this->response->addHeader('Content-Type: application/json');
+        $this->response->setOutput(json_encode($json));
+    }
+    /**
+     * @return rest
+     * @description Get category by product id
+     */
+    public function getCategoryByProductApi() {
+        $json = array();
+        
+        // Get product_id from request
+        $product_id = isset($this->request->get['product_id']) ? (int)$this->request->get['product_id'] : 0;
+        
+        if (!$product_id) {
+            $json['error'] = 'Product ID is required';
+            $this->response->addHeader('HTTP/1.0 400 Bad Request');
+            $this->response->setOutput(json_encode($json));
+            return;
+        }
+
+        // Load database query
+        $sql = "SELECT 
+                    c.name as category
+                FROM 
+                    " . DB_PREFIX . "product p
+                    LEFT JOIN " . DB_PREFIX . "product_to_category ptc ON p.product_id = ptc.product_id
+                    LEFT JOIN " . DB_PREFIX . "category_description c ON ptc.category_id = c.category_id
+                WHERE
+                    p.product_id = '" . (int)$product_id . "'
+                GROUP BY 
+                    p.product_id";
+
+        $query = $this->db->query($sql);
+
+        if ($query->num_rows) {
+            $json['category'] = $query->row['category'];
+        } else {
+            $json['category'] = null;
+        }
+
+        $this->response->addHeader('Content-Type: application/json');
+        $this->response->setOutput(json_encode($json));
+    }
+    
+    /**
+    * @return rest
+    * @description variations
+    */
+    public function productVariationsApi() {
+		$data = [];
+        $json = array();
+        
+        // Validação do product_id
+        if (!isset($this->request->get['product_id'])) {
+            $json['error'] = 'Product ID não fornecido';
+            $this->response->addHeader('HTTP/1.0 400 Bad Request');
+            $this->response->setOutput(json_encode($json));
+            return;
+        }
+        $product_id = (int)$this->request->get['product_id'];
+        
+        $this->load->model('catalog/product');
+        $product_info = $this->model_catalog_product->getProduct($product_id);
+
+        if (!$product_info) {
+            $json['error'] = 'Produto não encontrado';
+            $this->response->addHeader('HTTP/1.0 404 Not Found');
+            $this->response->setOutput(json_encode($json));
+            return;
+        }
+
+		if ($product_id) {
+
+			$this->load->model('tool/image');
+
+			$this->load->model('catalog/product');
+
+			$this->load->model('extension/module/custom_events');
+
+			$results = $this->model_extension_module_custom_events->getProductCombinations($product_id);
+            $product = $this->model_catalog_product->getProduct($product_id); 
+            
+            // Quando nao ha combinacoes do produto ele retorna o proprio produto como variante de si mesmo (obrigatorio mailbiz/flowbiz)
+            // quantos anos voce tinha quando descobriu que o jessie pinkman aparecia no clipe de thoughless do Korn?
+            if (empty($results)) {
+                $json['message'] = 'Nenhuma variação encontrada para este produto';
+                $json['product_id'] = $product_id;
+                $json['variants'][0] = array(
+                    "sku" => $product['sku'] ? $product['sku'] : $product['product_id'],
+                    "price" => (float)number_format($product['price'], 2, '.', '.'),
+                    "name" => $product['name']
+                );
+                
+                $this->response->addHeader('HTTP/1.0 200 OK');
+                $this->response->addHeader('Content-Type: application/json');
+                $this->response->setOutput(json_encode($json));
+                return;
+            }
+            
+            if (empty($results)) {
+                $json['message'] = 'Nenhuma variação encontrada para este produto';
+                $json['product_id'] = $product_id;
+                $json['product_combinations'] = array();
+                
+                $this->response->addHeader('HTTP/1.0 200 OK');
+                $this->response->setOutput(json_encode($json));
+                return;
+            }
+
+			foreach ($results as $result) {
+				$attribute_data = [];
+
+				foreach ($result['attribute'] as $value) {
+					$attribute_data[] = [
+						'option' => $value['option'],
+						'value' => $value['value'],
+						'color' => $value['color'],
+					];
+				}
+
+				$product_info = $this->model_extension_module_custom_events->getProductVariation($result['product_id']);
+
+				if (is_file(DIR_IMAGE . $product_info['image'])) {
+					$thumb = $product_info['image'];
+				} else {
+					$thumb = 'no_image.png';
+				}
+				$data['variants'][] = [
+                    'sku' => $product_info['sku'],
+					'price' => number_format($product_info['price'], 2, '.', ''),
+					'name' => $product['name'],
+				];
+
+			}
+            $data['product_id'] = $product_id;
+            $this->response->addHeader('Content-Type: application/json');
+            $this->response->setOutput(json_encode($data));
+		}
+		
+
+		// definir a resposta como JSON
+        $this->response->addHeader('HTTP/1.0 200 OK');
+        $this->response->setOutput(json_encode($data));
+		// $this->response->setOutput($this->load->view('extension/module/product_combination_list', $data));
     }
 }
