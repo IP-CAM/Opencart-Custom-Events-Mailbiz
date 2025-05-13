@@ -103,7 +103,6 @@ window.addEventListener("load", function (event) {
 		console.log('MailbizIntegration:: Carregando o script do MailBiz em modo debug');
 	}
 	
-	
 	if (!el) {
 		if (isDebug) {
 			console.error('MailbizIntegration:: Elemento com data-custom-events-token não encontrado');
@@ -113,6 +112,11 @@ window.addEventListener("load", function (event) {
 	
 	// Lê os dados do elemento
 	const cartData = JSON.parse(el.getAttribute('data-cart') || '{}');
+	
+	if (cartData && cartData.products && cartData.products.length > 0) {
+		sessionStorage.setItem('cart_id', cartData.products[0].cart_id);
+	}
+	
 	const totalsData = JSON.parse(el.getAttribute('data-totals') || '{}');
 	const totalDataSubTotal = totalsData.totals.filter(total => total.title === "Sub-total")[0].text;
 	const token = el.getAttribute('data-custom-events-token');
@@ -316,6 +320,8 @@ window.addEventListener("load", function (event) {
 		getProducts()
 			.then(result => {
 				if (forced_cart_id === null) {
+					const url_userData = el.getAttribute('data-base-url');
+					const complete_image_url = (image) => image ? url_userData + 'image/' + image : '';
 
 					const cartSyncData = {
 						cart: {
@@ -332,11 +338,10 @@ window.addEventListener("load", function (event) {
 								name: product.name,
 								price: product.price_raw,
 								quantity: parseInt(product.quantity),
-								image_url: product.image || '',
+								image_url: complete_image_url(product.image),
 							}))
 						}
 					};
-					// Dispara o evento cartSync
 					window.mb_track('cartSync', cartSyncData);
 					if (isDebug) {
 						console.log('MailbizIntegration:: cartSync', cartSyncData);
@@ -425,24 +430,6 @@ window.addEventListener("load", function (event) {
 		sendCartSyncEvent();
 	}
 	
-	if (isCheckoutPage) {
-		const checkoutEventData = {
-			checkout: {
-				cart_id: cartData.products[0].cart_id,
-				step: 1,
-				total_steps: 1,
-				step_name: 'CHECKOUT',
-			}
-		};
-		
-		sessionStorage.setItem('cart_id', cartData.products[0].cart_id);
-		
-		if (isDebug) {
-			console.log('MailbizIntegration:: 3.1 checkoutStep() - ischeckoutPage true then send checkout step', checkoutEventData)
-		}
-		window.mb_track('checkoutStep', checkoutEventData);
-	};
-	
 	if (isSuccessPage) {
 		const cart_id = sessionStorage.getItem('cart_id');
 		const mailbiz_cart_id = sessionStorage.getItem('mailbiz_cart_id');
@@ -464,6 +451,7 @@ window.addEventListener("load", function (event) {
 				throw error;
 			}    
 		}
+		const complete_image_url = (image) => image ? url_userData + 'image/' + image : '';
 		
 		getLastOrder()
 		.then(result => {
@@ -475,29 +463,38 @@ window.addEventListener("load", function (event) {
 					name: product.name,
 					price: product.price,
 					quantity: parseInt(product.quantity),
+					image_url: complete_image_url(product.image),
 				}))
 			}
-			
-			const orderCompleteEventData = {
-				order: {
-					order_id: result.data.order.order_id,
-					cart_id: mailbiz_cart_id || cart_id,
-					subtotal: Number(result.data.order.total),
-					freight: -1,
-					tax: -1,
-					discounts: -1,
-					total: Number(result.data.order.total),
-					...orderCompleteItemsData
+			// delivery object
+			getCustomer()
+			.then(resultCustomer => {
+				const delivery_address = {
+					postal_code: resultCustomer.data.address.postcode.replace('-', ''),
+					city: resultCustomer.data.address.city,
+					country: resultCustomer.data.address.country,
+					address_line1: resultCustomer.data.address.address_1,
+					address_line2: resultCustomer.data.address.address_2
 				}
-			}
-			
-			window.mb_track('orderComplete', orderCompleteEventData);
-			
-			if (isDebug) {
-				console.log('MailbizIntegration:: 4.1 orderComplete()', orderCompleteEventData)
-			}
-			
-			
+				const orderCompleteEventData = {
+					order: {
+						order_id: result.data.order.order_id,
+						cart_id: mailbiz_cart_id || cart_id || sessionStorage.getItem('cart_id'),
+						subtotal: Number(result.data.order.total),
+						freight: -1,
+						tax: -1,
+						discounts: -1,
+						total: Number(result.data.order.total),
+						...orderCompleteItemsData,
+						delivery_address: delivery_address
+					}
+				}
+				window.mb_track('orderComplete', orderCompleteEventData);
+				
+				if (isDebug) {
+					console.log('MailbizIntegration:: 4.1 orderComplete()', orderCompleteEventData)
+				}
+			})
 		})
 		.finally(() => {
 			sessionStorage.removeItem('cart_id');
@@ -557,7 +554,175 @@ window.addEventListener("load", function (event) {
 			});
 		});
 	}
-				
 
+	// no carrinho ao inserir o cep dispara o evento cartSetPostalCode
+	$(document).on('click', '#button-quote', function(e) {
+        const postcode = $('input[name="postcode"]').val().replace("-", "");
+		const cart_id = sessionStorage.getItem('cart_id');
+    
+        window.mb_track('cartSetPostalCode', {
+			cart_id,
+			postal_code: postcode,
+        });
+
+		if (isDebug) {
+			console.log('MailbizIntegration:: 31.1 cartSetPostalCode()', `postcode: ${postcode} `, `cart_id: ${cart_id}`)
+		}
+	});
+
+	// no carrinho ao inserir o cupom dispara o evento cartSetCoupon
+	$(document).on('click', '#button-coupon', function() {
+		const cupom = $('input[name="coupon"]').val();
+		const cart_id = sessionStorage.getItem('cart_id');
+
+		if (isDebug) {
+			console.log('MailbizIntegration:: 32.1 cartSetCoupon()', `cupom: ${cupom} `, `cart_id: ${cart_id}`)
+		}
+
+		window.mb_track('cartSetCoupon', {
+			cart_id,
+			coupon: cupom,
+		});
+	});
+	
+	console.log('clicou no login', currentRoute);
+	
+	const validStepNames = [
+		'IDENTIFICATION',
+		'REGISTER',
+		'REGISTER_DELIVERY',
+		'DELIVERY',
+		'PAYMENT',
+		'CONFIRM_ORDER'
+	];
+	
+	function sendCheckoutStepEvent(cartId, step, stepName) {
+		if (!validStepNames.includes(stepName)) {
+			if (isDebug) {
+				console.error('Invalid step name. Must be one of:', validStepNames.join(', '));
+			}
+			return;
+		}
+
+		const TOTAL_STEPS = 6;
+
+		const checkoutEventData = {
+			checkout: {
+				cart_id: cartId,
+				step: step,
+				total_steps: TOTAL_STEPS,
+				step_name: stepName
+			}
+		};
+
+		if (isDebug) {
+			console.log('MailbizIntegration:: Sending checkoutStep event', checkoutEventData);
+		}
+
+		window.mb_track('checkoutStep', checkoutEventData);
+	}
+	
+	$( document ).ready(function() {
+		// IDENTIFICATION
+		const checkLoginButton = () => {
+			const loginBtn = $('#button-login');
+			if (loginBtn.length) {
+				console.log('MailbizIntegration:: loginBtn encontrado');
+				if (cartData && cartData.products && cartData.products.length > 0) {
+					sendCheckoutStepEvent(cartData.products[0].cart_id, 1, 'IDENTIFICATION');
+				} else {
+					console.warn('MailbizIntegration:: cartData não está disponível ainda');
+				}
+			} else {
+				console.log('MailbizIntegration:: loginBtn não encontrado, tentando novamente...');
+				setTimeout(checkLoginButton, 1000);
+			}
+		};
+		checkLoginButton();
+		
+		// REGISTER
+		const registerButton = () => {
+			const registerBtn = $('#button-register');
+			if (registerBtn.length) {
+				console.log('MailbizIntegration:: registerBtn encontrado');
+				if (cartData && cartData.products && cartData.products.length > 0) {
+					sendCheckoutStepEvent(cartData.products[0].cart_id, 2, 'REGISTER');
+				} else {
+					console.warn('MailbizIntegration:: cartData não está disponível ainda');
+				}
+			} else {
+				console.log('MailbizIntegration:: registerBtn não encontrado, tentando novamente...');
+				setTimeout(registerButton, 1000);
+			}
+		}
+		registerButton();
+
+		// REGISTER_DELIVERY
+		const registerDeliveryButton = () => {
+			const registerDeliveryBtn = $('#button-shipping-address');
+			if (registerDeliveryBtn.length) {
+				console.log('MailbizIntegration:: registerDeliveryBtn encontrado');
+				if (cartData && cartData.products && cartData.products.length > 0) {
+					sendCheckoutStepEvent(cartData.products[0].cart_id, 3, 'REGISTER_DELIVERY');
+				} else {
+					console.warn('MailbizIntegration:: cartData não está disponível ainda');
+				}
+			} else {
+				console.log('MailbizIntegration:: registerDeliveryBtn não encontrado, tentando novamente...');
+				setTimeout(registerDeliveryButton, 1000);
+			}
+		}
+		registerDeliveryButton();
+
+		// DELIVERY
+		const deliveryButton = () => {
+			const deliveryBtn = $('#button-shipping-method');
+			if (deliveryBtn.length) {
+				console.log('MailbizIntegration:: deliveryBtn encontrado');
+				if (cartData && cartData.products && cartData.products.length > 0) {
+					sendCheckoutStepEvent(cartData.products[0].cart_id, 4, 'DELIVERY');
+				} else {
+					console.warn('MailbizIntegration:: cartData não está disponível ainda');
+				}
+			} else {
+				console.log('MailbizIntegration:: deliveryBtn não encontrado, tentando novamente...');
+				setTimeout(deliveryButton, 1000);
+			}
+		}
+		deliveryButton();
+
+		// PAYMENT
+		const paymentButton = () => {
+			const paymentBtn = $('#button-payment-method');
+			if (paymentBtn.length) {
+				console.log('MailbizIntegration:: paymentBtn encontrado');
+				if (cartData && cartData.products && cartData.products.length > 0) {
+					sendCheckoutStepEvent(cartData.products[0].cart_id, 5, 'PAYMENT');
+				} else {
+					console.warn('MailbizIntegration:: cartData não está disponível ainda');
+				}
+			} else {
+				console.log('MailbizIntegration:: paymentBtn não encontrado, tentando novamente...');
+				setTimeout(paymentButton, 1000);
+			}
+		}
+		paymentButton();
+		
+		// CONFIRM_ORDER
+		const confirmOrderButton = () => {
+			const confirmOrderBtn = $('#button-confirm');
+			if (confirmOrderBtn.length) {
+				console.log('MailbizIntegration:: confirmOrderBtn encontrado');
+				if (cartData && cartData.products && cartData.products.length > 0) {
+					sendCheckoutStepEvent(cartData.products[0].cart_id, 6, 'CONFIRM_ORDER');
+				} else {
+					console.warn('MailbizIntegration:: cartData não está disponível ainda');
+				}
+			} else {
+				console.log('MailbizIntegration:: confirmOrderBtn não encontrado, tentando novamente...');
+				setTimeout(confirmOrderButton, 1000);
+			}
+		}
+		confirmOrderButton();
+	});
 });
-//extension/module/checkoutpro/checkout

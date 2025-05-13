@@ -243,7 +243,10 @@ class ControllerExtensionModuleCustomEvents extends Controller {
         $this->response->addHeader('Content-Type: application/json');
         $this->response->setOutput(json_encode($json));
     }
-
+    /**
+     * @return rest
+     * @description Get last order of customer
+     */
     public function getLastOrderApi() {
         $json = array();
         
@@ -275,7 +278,8 @@ class ControllerExtensionModuleCustomEvents extends Controller {
                     'model' => $product['model'],
                     'quantity' => $product['quantity'],
                     'price' => $product['price'],
-                    'total' => $product['total']
+                    'total' => $product['total'],
+                    'image' => isset($product['image'])? $product['image'] : ''
                 );
             }
             
@@ -336,7 +340,6 @@ class ControllerExtensionModuleCustomEvents extends Controller {
     
     /**
     * @return rest
-    * @description variations
     */
     public function productVariationsApi() {
 		$data = [];
@@ -370,17 +373,18 @@ class ControllerExtensionModuleCustomEvents extends Controller {
 			$this->load->model('extension/module/custom_events');
 
 			$results = $this->model_extension_module_custom_events->getProductCombinations($product_id);
-            $product = $this->model_catalog_product->getProduct($product_id); 
+            $product = $this->model_catalog_product->getProduct($product_id);
             
+            $base = $this->config->get('config_url');
             // Quando nao ha combinacoes do produto ele retorna o proprio produto como variante de si mesmo (obrigatorio mailbiz/flowbiz)
-            // quantos anos voce tinha quando descobriu que o jessie pinkman aparecia no clipe de thoughless do Korn?
             if (empty($results)) {
                 $json['message'] = 'Nenhuma variação encontrada para este produto';
                 $json['product_id'] = $product_id;
                 $json['variants'][0] = array(
                     "sku" => $product['sku'] ? $product['sku'] : $product['product_id'],
                     "price" => (float)number_format($product['price'], 2, '.', '.'),
-                    "name" => $product['name']
+                    "name" => $product['name'],
+                    "image" => ($base . 'image/' . $product['image'])
                 );
                 
                 $this->response->addHeader('HTTP/1.0 200 OK');
@@ -421,6 +425,7 @@ class ControllerExtensionModuleCustomEvents extends Controller {
                     'sku' => $product_info['sku'],
 					'price' => number_format($product_info['price'], 2, '.', ''),
 					'name' => $product['name'],
+                    'image' => ($base + $product['image'])
 				];
 
 			}
